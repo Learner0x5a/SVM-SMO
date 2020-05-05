@@ -1,5 +1,4 @@
 # SVM-SMO
-Python实现SVM，SMO算法，详细注释
 
 对参考源码的完整SMO算法添加详细注释
 
