@@ -33,7 +33,7 @@ class PlattSMO:
     def __init__(self,dataMat,classlabels,C,toler,maxIter,**kernelargs):
         self.x = np.array(dataMat)
         self.label = np.array(classlabels).T
-        self.C = C # 常数
+        self.C = C # 对分类错误的惩罚程度
         self.toler = toler # 误差限
         self.maxIter = maxIter # 迭代限
         self.m = np.shape(dataMat)[0]
@@ -196,7 +196,7 @@ class PlattSMO:
                 pred += self.SVAlpha[j] * self.SVLabel[j] * self.kernelTrans(self.SV[j],test[i,:])
             while pred == 0: # 如果predict结果为0，取个随机值
                 pred = random.uniform(-1,1)
-            # 二分类的处理
+            # 分类的阈值
             if pred > 0: # 大于0，取1
                 pred = 1
             else: # 小于零，取-1
