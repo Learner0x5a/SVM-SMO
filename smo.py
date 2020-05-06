@@ -195,7 +195,7 @@ class PlattSMO:
             for j in range(len(self.SVIndex)): # 计算f(x)
                 pred += self.SVAlpha[j] * self.SVLabel[j] * self.kernelTrans(self.SV[j],test[i,:])
             while pred == 0: # 如果predict结果为0，取个随机值
-                pred = random.uniform(-1,1)
+                pred = np.random.uniform(-1,1)
             # 分类的阈值
             if pred > 0: # 大于0，取1
                 pred = 1
