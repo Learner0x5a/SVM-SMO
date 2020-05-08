@@ -1,64 +1,56 @@
 '''
 参考源码：https://github.com/huxinliang8888/svm
 SVM SMO算法详细推导及总结：https://blog.csdn.net/weixin_42001089/article/details/83276714
+
+重构代码，封装，实现类似于sklearn的接口
 '''
 import numpy as np
-
-# 随机选择第2个alpha
-def selectJrand(i,m):
-    j = i
-    while j == i:
-        j = int(np.random.uniform(0,m))
-    return j
-
-# 调整大于H或小于L的alpha值
-def clipAlpha(a_j,H,L):
-    if a_j > H:
-        a_j = H
-    if L > a_j:
-        a_j = L
-    return a_j
-
-def loadDataSet(filename):
-    fr = open(filename)
-    data = []
-    label = []
-    for line in fr.readlines():
-        lineAttr = line.strip().split('\t')
-        data.append([float(x) for x in lineAttr[:-1]])
-        label.append(float(lineAttr[-1]))
-    return data,label
-
-class PlattSMO:
-    def __init__(self,dataMat,classlabels,C,toler,maxIter,**kernelargs):
-        self.x = np.array(dataMat)
-        self.label = np.array(classlabels).T
-        self.C = C # 对分类错误的惩罚程度
+class BinarySVC:
+    def __init__(self,C,toler,maxIter,**kernelargs):
+        self.C = C # 对分类错误的惩罚程度；可以尝试：两类点采用两种C，从而实现对误报/漏报的偏向
         self.toler = toler # 误差限
         self.maxIter = maxIter # 迭代限
-        self.m = np.shape(dataMat)[0]
-        self.n = np.shape(dataMat)[1]
-        self.alpha = np.array(np.zeros(self.m),dtype='float64') # 初始化alpha
-        self.b = 0. # 初始化b
-        self.E = np.array(np.zeros((self.m,2))) # 维护一个误差矩阵，每行对应一个x，每行第一个元素标记是否更新过误差，第二个元素为误差值
-        self.K = np.zeros((self.m,self.m),dtype='float64') # 初始化內积矩阵
-        self.kwargs = kernelargs
-        self.SV = ()
-        self.SVIndex = None
+        self.kwargs = kernelargs # 核函数的参数
+
+        self.x = None
+        self.label = None
+        self.m = None
+        self.alpha = None
+        self.b = None
+        self.E = None
+        self.K = None
+
+        self.support_vector_x = None # 支持向量
+        self.support_vector_index = None
+        self.support_vector_alpha = None
+        self.support_vector_label = None
         self.w = 0.
-        # 应用核函数
-        for i in range(self.m):
-            for j in range(self.m):
-                self.K[i,j] = self.kernelTrans(self.x[i,:],self.x[j,:])
-    # 计算误差            
-    def calcEK(self,k):
+
+    # 计算误差
+    # 可以尝试：调高欺诈数据的loss权重，就是当label=欺诈时，给原始的E乘个系数
+    def EK(self,k):
         fxk = np.dot(self.alpha*self.label,self.K[:,k])+self.b
         Ek = fxk - float(self.label[k])
         return Ek
     # 更新误差
     def updateEK(self,k):
-        Ek = self.calcEK(k)
+        Ek = self.EK(k)
         self.E[k] = [1 ,Ek] # 更新过误差的，第一个元素为1
+
+    # 随机选择第2个alpha
+    def selectJrand(self,i,m):
+        j = i
+        while j == i:
+            j = int(np.random.uniform(0,m))
+        return j
+
+    # 调整大于H或小于L的alpha值
+    def clipAlpha(self,a_j,H,L):
+        if a_j > H:
+            a_j = H
+        if L > a_j:
+            a_j = L
+        return a_j
 
     def selectJ(self,i,Ei): # 找最大化|E1-E2|的j
         maxE = 0.
@@ -70,7 +62,7 @@ class PlattSMO:
             for k in validECacheList: # 找最大化|E1-E2|的j
                 if k == i:
                     continue
-                Ek = self.calcEK(k)
+                Ek = self.EK(k)
                 deltaE = abs(Ei-Ek)
                 if deltaE > maxE:
                     selectJ = k
@@ -78,14 +70,14 @@ class PlattSMO:
                     Ej = Ek
             return selectJ,Ej
         else: # 最初随机选一个j
-            selectJ = selectJrand(i,self.m)
-            Ej = self.calcEK(selectJ)
+            selectJ = self.selectJrand(i,self.m)
+            Ej = self.EK(selectJ)
             return selectJ,Ej
 
     def innerL(self, i): # 主功能
-        Ei = self.calcEK(i)
-        if (self.label[i] * Ei < -self.toler and self.alpha[i] < self.C) or \
-                (self.label[i] * Ei > self.toler and self.alpha[i] > 0): # 找第一个alphas[i]，即不满足KKT条件的alpha
+        Ei = self.EK(i)
+        # 找第一个alphas[i]，即不满足KKT条件的alpha
+        if (self.label[i] * Ei < -self.toler and self.alpha[i] < self.C) or (self.label[i] * Ei > self.toler and self.alpha[i] > 0): 
             self.updateEK(i)
             j,Ej = self.selectJ(i,Ei) # 找第2个alphas[j]，启发式(找最大化|E1-E2|的j)
 
@@ -110,7 +102,7 @@ class PlattSMO:
             # 计算新的alpha2，不考虑约束
             self.alpha[j] -= self.label[j]*(Ei-Ej)/eta
             # 修正alpha2
-            self.alpha[j] = clipAlpha(self.alpha[j],H,L)
+            self.alpha[j] = self.clipAlpha(self.alpha[j],H,L)
             # 更新误差E2，误差由一个矩阵维护
             self.updateEK(j)
             # 如果误差E2变化很小，退出
@@ -138,7 +130,21 @@ class PlattSMO:
         else:
             return 0
 
-    def smoP(self): # 主循环
+    def fit(self,dataMat,classlabels): 
+        # 初始化
+        self.x = np.array(dataMat)
+        self.label = classlabels
+        self.m = np.shape(dataMat)[0]
+        self.alpha = np.array(np.zeros(self.m),dtype='float64') # 初始化alpha
+        self.b = 0. # 初始化b
+        self.E = np.array(np.zeros((self.m,2))) # 维护一个误差矩阵，每行对应一个x，每行第一个元素标记是否更新过误差，第二个元素为误差值
+        self.K = np.zeros((self.m,self.m),dtype='float64') # 初始化內积矩阵
+        # 应用核函数
+        for i in range(self.m):
+            for j in range(self.m):
+                self.K[i,j] = self.Kernel(self.x[i,:],self.x[j,:])
+
+        # 主循环
         iter = 0
         entireSet = True # 全集遍历的标识
         alphaPairChanged = 0
@@ -160,25 +166,26 @@ class PlattSMO:
             elif alphaPairChanged == 0: # 如果非边界的点没有更新alpha，切换回全集遍历
                 entireSet = True
         
-        # 迭代结束，整理系数
-        self.SVIndex = np.nonzero(self.alpha)[0] # 非0的alpha的索引
-        self.SV = self.x[self.SVIndex] # 非0的alpha对应的x
-        self.SVAlpha = self.alpha[self.SVIndex] # 非0的alpha
-        self.SVLabel = self.label[self.SVIndex] # 非0的alpha对应的y
+        # 迭代结束，整理系数，计算w
+        self.support_vector_index = np.nonzero(self.alpha)[0] # 非0的alpha的索引，即支持向量
+        self.support_vector_x = self.x[self.support_vector_index] # 非0的alpha对应的x
+        self.support_vector_alpha = self.alpha[self.support_vector_index] # 非0的alpha
+        self.support_vector_label = self.label[self.support_vector_index] # 非0的alpha对应的y
+        self.calcw()
 
-        # 清理内存，如果需要画图的话，不要清理，训练结束后另行计算w
+        # 清理内存
         self.x = None
         self.K = None
         self.label = None
         self.alpha = None
         self.E = None
 
-    def kernelTrans(self,x,z): # 两个向量的核函数
+    def Kernel(self,x,z): # 两个向量的核函数
         if np.array(x).ndim != 1 or np.array(z).ndim != 1:
             raise Exception("input vector is not 1 dim")
-        if self.kwargs['name'] == 'linear':
+        if self.kwargs['kernel'] == 'linear':
             return np.sum(x*z)
-        elif self.kwargs['name'] == 'rbf':
+        elif self.kwargs['kernel'] == 'rbf':
             theta = self.kwargs['theta']
             return np.exp(np.sum((x-z)*(x-z))/(-1*theta**2))
 
@@ -186,28 +193,16 @@ class PlattSMO:
         for i in range(self.m):
             self.w += np.dot(self.alpha[i]*self.label[i],self.x[i,:])
 
-    def predict(self,testData):
+    def transform(self,testData):
         test = np.array(testData)
-        #return (test * self.w + self.b).getA()
         result = []
-        for i in range(np.shape(test)[0]): # 对每个要predict的x
+        for i in range(np.shape(test)[0]): # 对每个测试样本计算预测值
             pred = self.b
-            for j in range(len(self.SVIndex)): # 计算f(x)
-                pred += self.SVAlpha[j] * self.SVLabel[j] * self.kernelTrans(self.SV[j],test[i,:])
-            while pred == 0: # 如果predict结果为0，取个随机值
-                pred = np.random.uniform(-1,1)
-            # 分类的阈值
-            if pred > 0: # 大于0，取1
-                pred = 1
-            else: # 小于零，取-1
-                pred = -1
+            for j in range(len(self.support_vector_index)): # 计算f(x)
+                pred += self.support_vector_alpha[j] * self.support_vector_label[j] * self.Kernel(self.support_vector_x[j],test[i,:])
             result.append(pred)
+        result = np.asarray(result)
+        # result = result/max(abs(result)) # 归一化
+        # 分类阈值
+        # result = (result > 0.).astype(np.int)
         return result
-        
-data,label = loadDataSet('testSetRBF.txt')
-smo = PlattSMO(data,label,200,0.0001,10000,name = 'rbf',theta = 1.3)
-smo.smoP()
-# smo.calcw()
-predict = smo.predict(data)
-from sklearn.metrics import mean_squared_error
-print(mean_squared_error(label,predict))
